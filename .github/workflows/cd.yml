@@ -1,0 +1,72 @@
+name: cd
+
+on:
+  workflow_call:
+    inputs:
+      backend:
+        type: string
+      var-file:
+        type: string
+      env:
+        type: string
+jobs:
+  cd:
+    runs-on: ubuntu-latest
+    environment: ${{inputs.env}}
+    defaults:
+      run:
+        working-directory: "terraform" # Todo: inputs!
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo:  true
+          egress-policy: audit
+
+      - name: Check-Out
+        uses: actions/checkout@v4
+
+      - name: AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region:     ${{secrets.AWS_REGION}}
+          role-to-assume: ${{secrets.ROLE_TO_ASSUME}}
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run:  terraform init -backend-config=${{inputs.backend}}
+        id:   init
+
+      - name: Terraform Plan
+        if:   github.event_name == 'pull_request'
+        run:  terraform plan -var-file=${{inputs.var-file}} -no-color
+        id:   plan
+
+      - uses: actions/github-script@v7
+        if:   github.event_name == 'pull_request'
+        env:
+          PLAN: "${{steps.plan.outputs.stdout}}"
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const body = `### Terraform Plan\n\`\`\`\n${process.env.PLAN}\`\`\``;
+            ({issue, repo} = context);
+            ({owner, repo} = repo);
+
+            github.rest.issues.createComment({
+              issue_number: issue.number,
+              owner,
+              repo,
+              body,
+            });
+
+      - name: Terraform Apply
+        if:   github.event_name != 'pull_request'
+        run:  terraform apply -var-file=${{inputs.var-file}} --auto-approve
+        id:   apply
+
+#     - {...}
+#   {...}
+# {...}
